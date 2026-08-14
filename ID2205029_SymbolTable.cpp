@@ -2,51 +2,71 @@
 #include<string>
 #include<fstream>
 #include<sstream>
+#include<vector>
 using namespace std;
 
 class SymbolInfo{ 
+    public: 
     string name;
     string type;
+    string varType;
     string retType;
     string* args;
     string* fields;
     string* fieldTypes;
     int numFields;
     int numArgs;
-    public:
+    bool isDefined;
+    bool isFunction;
+    bool isArray;
     SymbolInfo* next;
     SymbolInfo(){
         this->name = "";
         this->type = "";
         this->retType = "";
+        this->varType = "";
         this->args = nullptr;
         this->fields = nullptr;
         this->fieldTypes = nullptr;
         this->numFields = 0;
         this->numArgs = 0;
         this->next = nullptr;
+        this->isDefined = false;
+        this->isFunction = false;
+        this->isArray = false;
     }
-    SymbolInfo(string name, string full){
+    SymbolInfo(string name, string full, string varType, bool isFunction=false, bool isDefined=false, bool isArray=false){
         this->name = name;
-        this->type = "";
+        this->type = "ID";
         this->retType = "";
+        this->varType = varType;
         this->args = nullptr;
         this->fields = nullptr;
         this->fieldTypes = nullptr;
         this->numFields = 0;
         this->numArgs = 0;
+        this->isDefined = isDefined;
         this->next = nullptr;
-        addType(full);        
+        this->isFunction = isFunction;
+        this->isArray = isArray;
+        if (isFunction) {
+            addType(full);
+        }
+
     }
     SymbolInfo(const SymbolInfo &symbol){
         this->name = symbol.name;
         this->type = symbol.type;
         this->retType = symbol.retType;
+        this->varType = symbol.varType;
         this->args = nullptr;
         this->fields = nullptr;
         this->fieldTypes = nullptr;
         this->numFields = 0;
         this->numArgs = 0;
+        this->isDefined = symbol.isDefined;
+        this->isFunction = symbol.isFunction;
+        this->isArray = symbol.isArray;
         this->next = nullptr;
 
         for (int i = 0; i < symbol.numArgs; i++) {
@@ -67,6 +87,16 @@ class SymbolInfo{
     string getType(){
         return type;
     }
+    string getRetType(){
+        return retType;
+    }
+    vector<string> getArgs(){
+        vector<string> argList;
+        for (int i = 0; i < numArgs; i++) {
+            argList.push_back(args[i]);
+        }
+        return argList;
+    }
     void setName(string name){
         this->name = name;
     }
@@ -86,26 +116,26 @@ class SymbolInfo{
         delete[] args;
         args = newArgs;
     }
-    void addType(string full){
+    void addType(string full) { 
         istringstream iss(full);
-        string tok;
-        string tok2;
-        if (iss >> tok) {
-            setType(tok);
-            if (tok == "FUNCTION") {
-                if (iss >> tok) {
-                    setRetType(tok);
-                }
-                while (iss >> tok) {
-                    addArgs(tok);
-                }
-            } else if (tok == "STRUCT" || tok == "UNION") {
-                while (iss >> tok) {                    
-                    if (iss >> tok2) addField(tok, tok2);
-                }
+        string dummyID, rType;
+    
+        if (iss >> dummyID >> rType) {
+            setRetType(rType);
+        }
 
-            } else {
-                setType(full);
+        string rawParams;
+        getline(iss, rawParams);
+
+        if (rawParams.empty()) return;
+
+        stringstream ss(rawParams);
+        string paramToken;
+        while (getline(ss, paramToken, ',')) {
+            stringstream paramStream(paramToken);
+            string typeSpec, varName;
+            if (paramStream >> typeSpec) {                
+                addArgs(typeSpec);                 
             }
         }
     }
@@ -123,29 +153,6 @@ class SymbolInfo{
         delete[] fieldTypes;
         fields = newFields;
         fieldTypes = newFieldTypes;
-    }
-    string getString(){
-        string result = name + "," + type;
-        if (type == "FUNCTION") {
-            result += "," + retType+"<==(";
-            if (numArgs > 0) {
-                result += args[0];
-            }
-            for (int i = 1; i < numArgs; i++) {
-                result += "," + args[i];
-            }
-            result += ")";
-        } else if (type == "STRUCT" || type == "UNION") {
-            result+= ",{";
-            if(numFields > 0){
-                result += "(" + fieldTypes[0] + "," + fields[0] + ")";
-            }
-            for (int i = 1; i < numFields; i++) {
-                result += ",(" + fieldTypes[i] + "," + fields[i] + ")";
-            }
-            result += "}";
-        }
-        return result;
     }
 };
 
@@ -272,7 +279,8 @@ class ScopeTable{
     }
 
     void Print(ofstream &logFile){
-        logFile << "ScopeTable # " << scopeID << endl;
+
+        logFile <<endl<< "ScopeTable # " << scopeID << endl;
         for(int i = 0; i < numBuckets; i++){            
             SymbolInfo* ptr = table[i];
             if(ptr != nullptr){      
@@ -284,14 +292,14 @@ class ScopeTable{
                 logFile << endl;                
             }
         }
-        logFile << endl;
+        logFile << endl<<endl;
     }
 
 };
 
-class SymbolTable{
-    ScopeTable *currentScope;
+class SymbolTable{    
     public:
+    ScopeTable *currentScope;
     SymbolTable(int numBuckets=30){
         currentScope = new ScopeTable(numBuckets, nullptr);
     }
@@ -331,8 +339,12 @@ class SymbolTable{
             return false;
         }
     }
-    bool Insert(string name, string type){
-        SymbolInfo symbol(name, type);
+    bool InsertParent(string name, string type, string varType, bool isFunction=false, bool isDefined=false, bool isArray=false){
+        SymbolInfo symbol(name, type, varType, isFunction, isDefined, isArray);
+        return currentScope->parentScope->Insert(symbol);
+    }
+    bool Insert(string name, string type, string varType, bool isFunction=false, bool isDefined=false, bool isArray=false){
+        SymbolInfo symbol(name, type, varType, isFunction, isDefined, isArray);
         return currentScope->Insert(symbol);
     }
     bool Remove(string name){
@@ -346,6 +358,7 @@ class SymbolTable{
     }
     void PrintAll(ofstream &logFile){
         ScopeTable *temp = currentScope;
+        logFile << endl<<endl;
         int indent = 4;
         while(temp != nullptr){
             temp->Print(logFile);
